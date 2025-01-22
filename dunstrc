@@ -327,6 +327,11 @@
     mouse_middle_click = do_action, close_current
     mouse_right_click = close_all
 
+    built_in_menu = false
+    menu_frame_color = "#d0d0d0"
+    menu_height = 30
+    menu_min_width = 30
+
 # Experimental features that may or may not work correctly. Do not expect them
 # to have a consistent behaviour across releases.
 [experimental]
