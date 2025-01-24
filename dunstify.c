@@ -225,7 +225,7 @@ void put_id(NotifyNotification *n, guint32 id)
 void actioned(NotifyNotification *n, char *a, gpointer foo)
 {
     notify_notification_close(n, NULL);
-    g_print("%s\n", a);
+    g_print("dunstify actioned [%s]\n", a);
     die(0);
 }
 

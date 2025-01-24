@@ -1643,11 +1643,42 @@ static const struct setting allowed_settings[] = {
                 .section = "global",
                 .description = "",
                 .type = TYPE_INT,
-                .default_value = "30",
+                .default_value = "50",
                 .value = &settings.menu_min_width,
                 .parser = NULL,
                 .parser_data = NULL,
         },
+        {
+                .name = "menu_max_width",
+                .section = "global",
+                .description = "",
+                .type = TYPE_INT,
+                .default_value = "300",
+                .value = &settings.menu_max_width,
+                .parser = NULL,
+                .parser_data = NULL,
+        },
+        {
+                .name = "menu_max_buttons_per_row",
+                .section = "global",
+                .description = "",
+                .type = TYPE_INT,
+                .default_value = "4",
+                .value = &settings.menu_max_buttons_per_row,
+                .parser = NULL,
+                .parser_data = NULL,
+        },
+        {
+                .name = "menu_max_button_rows",
+                .section = "global",
+                .description = "",
+                .type = TYPE_INT,
+                .default_value = "4",
+                .value = &settings.menu_max_button_rows,
+                .parser = NULL,
+                .parser_data = NULL,
+        },
+
 };
 #endif
 /* vim: set ft=c tabstop=8 shiftwidth=8 expandtab textwidth=0: */

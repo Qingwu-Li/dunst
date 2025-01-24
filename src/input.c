@@ -59,16 +59,26 @@ bool handle_builtin_menu_click(int x, int y) {
         if (!settings.built_in_menu) {
                 return false;
         }
+        fprintf(stderr, "Built-in menu click\n");
 
         struct notification *n = get_notification_at(y);
         if (n) {
                 if (menu_get_count(n) > 0) {
                         struct menu *m = menu_get_at(n, x, y);
                         if (m) {
+                                fprintf(stderr, "HHHH Menu found at (%d %d) key %s\n", x, y, m->key);
                                 signal_action_invoked(n, m->key);
                                 return true;
-                        }
+                        }else {
+                        fprintf(stderr, "HHHH No menu found at (%d %d)\n", x,y);
                 }
+                }
+                else {
+                        fprintf(stderr, "HHHH menu_get_count %d\n", menu_get_count(n));
+                }
+        }
+        else {
+                fprintf(stderr, "HHHH No notification found at %d\n", y);
         }
         return false;
 }
@@ -78,6 +88,7 @@ void input_handle_click(unsigned int button, bool button_down, int mouse_x, int 
 
         if (button_down) {
                 // make sure it only reacts on button release
+                fprintf(stderr, "Button down return\n");
                 return;
         }
 

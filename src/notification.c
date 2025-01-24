@@ -559,6 +559,9 @@ void notification_init(struct notification *n)
         if (n->dbus_timeout >= 0)
                 n->timeout = n->dbus_timeout;
 
+        n->menus_button_rows=0;
+        n->menus_button_per_row=0;
+
 }
 
 static void notification_format_message(struct notification *n)

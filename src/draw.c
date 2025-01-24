@@ -36,7 +36,10 @@ const struct output *output;
 window win;
 
 PangoFontDescription *pango_fdesc;
-
+static int calculate_menu_height(const struct colored_layout *cl);
+static int calculate_max_text_width(const struct colored_layout *cl);
+static int calculate_menu_per_row(const struct colored_layout *cl);
+static int calculate_menu_rows(const struct colored_layout *cl);
 // NOTE: Saves some characters
 #define COLOR(cl, field) (cl)->n->colors.field
 
@@ -300,14 +303,13 @@ static void free_colored_layout(void *data)
 static struct dimensions calculate_notification_dimensions(struct colored_layout *cl, double scale)
 {
         struct dimensions dim = { 0 };
+        fprintf(stderr, "calculate_notification_dimensions\n");
         layout_setup(cl, settings.width.max, settings.height.max, scale);
 
         int horizontal_padding = get_horizontal_text_icon_padding(cl->n);
         int icon_width = cl->icon? get_icon_width(cl->icon, scale) + horizontal_padding : 0;
         int icon_height = cl->icon? get_icon_height(cl->icon, scale) : 0;
         int progress_bar_height = have_progress_bar(cl) ? settings.progress_bar_height + settings.padding : 0;
-        int menu_height = have_built_in_menu(cl) ? settings.menu_height + settings.padding : 0;
-
         int vertical_padding;
         if (cl->n->hide_text) {
                 vertical_padding = 0;
@@ -327,10 +329,10 @@ static struct dimensions calculate_notification_dimensions(struct colored_layout
         dim.h += progress_bar_height + settings.padding * 2;
         dim.w = dim.text_width + icon_width + 2 * settings.h_padding;
 
-        dim.h += menu_height + settings.padding * 2;
-
         if (have_progress_bar(cl))
                 dim.w = MAX(settings.progress_bar_min_width, dim.w);
+
+        dim.h += calculate_menu_height(cl);
 
         dim.h = MAX(settings.height.min, dim.h);
         dim.h = MIN(settings.height.max, dim.h);
@@ -347,6 +349,7 @@ static struct dimensions calculate_dimensions(GSList *layouts)
         int layout_count = g_slist_length(layouts);
         struct dimensions dim = { 0 };
         double scale = output->get_scale();
+        fprintf(stderr, "calculate_dimensions\n");
 
         dim.corner_radius = settings.corner_radius;
 
@@ -423,7 +426,7 @@ static struct colored_layout *layout_derive_xmore(cairo_t *c, struct notificatio
 
 static struct colored_layout *layout_from_notification(cairo_t *c, struct notification *n)
 {
-
+        fprintf(stderr,"layout_from_notification\n");
         struct colored_layout *cl = layout_init_shared(c, n);
 
         if (n->icon_position != ICON_OFF && n->icon) {
@@ -455,6 +458,8 @@ static struct colored_layout *layout_from_notification(cairo_t *c, struct notifi
 
         if(have_built_in_menu(cl)) {
                 menu_init(n);
+                n->menus_button_rows=calculate_menu_per_row(cl);
+                n->menus_button_per_row=calculate_menu_per_row(cl);
         }
 
         n->first_render = false;
@@ -499,7 +504,7 @@ static int layout_get_height(struct colored_layout *cl, double scale)
         int h_text = 0;
         int h_icon = 0;
         int h_progress_bar = 0;
-        int h_action_menu = 0;
+        fprintf(stderr,"layout_get_height\n");
 
         int vertical_padding;
         if (cl->n->hide_text) {
@@ -516,13 +521,9 @@ static int layout_get_height(struct colored_layout *cl, double scale)
                 h_progress_bar = settings.progress_bar_height + settings.padding;
         }
 
-        if(have_built_in_menu(cl)){
-                h_action_menu += settings.menu_height + settings.padding;
-        }
-
         return (cl->n->icon_position == ICON_TOP && cl->n->icon)
                 ? h_icon + h_text + h_progress_bar + vertical_padding
-                : MAX(h_text, h_icon) + h_progress_bar + h_action_menu;
+                : MAX(h_text, h_icon) + h_progress_bar + calculate_menu_height(cl);
 }
 
 /* Attempt to make internal radius more organic.
@@ -719,15 +720,96 @@ void draw_rounded_rect(cairo_t *c, float x, float y, int width, int height, int 
         cairo_close_path(c);
 }
 
-static void draw_built_in_menu(cairo_t               *c,
-                          struct colored_layout *cl,
-                          int                    area_x,
-                          int                    area_y,
-                          int                    area_width,
-                          int                    area_height,
-                          double                 scale)
+/*start*/
+static int calculate_max_text_width(const struct colored_layout *cl)
 {
-        if(!have_built_in_menu(cl))
+        int buttons = menu_get_count(cl->n);
+        if (buttons == 0) {
+                return 0;
+        }
+
+        cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+        cairo_t *cr = cairo_create(surface);
+
+        cairo_select_font_face(cr, settings.font, CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+
+        int max_text_width = 0;
+        for (int i = 0; i < buttons; i++) {
+                char *label = menu_get_label(cl->n, i);
+                if (!label) {
+                        continue;
+                }
+
+                cairo_text_extents_t extents;
+                cairo_text_extents(cr, label, &extents);
+                int width = (int)ceil(extents.width);
+                fprintf(stderr, "width %s = %d\n", label, width);
+
+                if (width > max_text_width) {
+                        max_text_width = width;
+                }
+        }
+
+        cairo_destroy(cr);
+        cairo_surface_destroy(surface);
+
+        return max_text_width + 2 * settings.padding;
+}
+
+static int calculate_menu_per_row(const struct colored_layout *cl)
+{
+        int menu_width = calculate_max_text_width(cl);
+        if (menu_width <= 0) {
+                return 0;
+        }
+
+        int menu_count = 300 / menu_width;
+        fprintf(stderr, "menu_count %d\n", menu_count);
+        menu_count = MIN(settings.menu_max_buttons_per_row, menu_count);
+        fprintf(stderr, "2 menu_count %d\n", menu_count);
+        return menu_count;
+}
+
+static int calculate_menu_rows(const struct colored_layout *cl)
+{
+        fprintf(stderr, "menu_max_buttons_per_row=%d\n", settings.menu_max_buttons_per_row);
+
+        int buttons = menu_get_count(cl->n);
+        if (buttons <= 0) {
+                fprintf(stderr, "buttons=%d\n", buttons);
+                return 0;
+        }
+        fprintf(stderr, "buttons=%d\n", buttons);
+
+        int max_per_row = calculate_menu_per_row(cl);
+        fprintf(stderr, "max_per_row=%d\n", max_per_row);
+        if (max_per_row < 1) {
+                max_per_row = 1;
+        }
+
+        int needed_rows = (buttons + max_per_row - 1) / max_per_row;
+        fprintf(stderr, "needed_rows=%d\n", needed_rows);
+        return needed_rows;
+}
+
+static int calculate_menu_height(const struct colored_layout *cl)
+{
+        fprintf(stderr, "calculate_menu_height\n");
+        if (true) {
+                fprintf(stderr, "have_built_in_menu\n");
+                int rows = calculate_menu_rows(cl);
+                fprintf(stderr, "rows=%d\n", rows);
+                return settings.menu_height * rows + settings.padding * rows;
+        } else {
+                fprintf(stderr, "0000\n");
+                return 0;
+        }
+}
+
+static void draw_built_in_menu(cairo_t *c, struct colored_layout *cl, int area_x, int area_y, int area_width,
+                               int area_height, double scale)
+{
+        if (!have_built_in_menu(cl))
                 return;
 
         int buttons = menu_get_count(cl->n);
@@ -735,42 +817,58 @@ static void draw_built_in_menu(cairo_t               *c,
                 return;
         }
 
-        int total_gap = settings.padding * (buttons + 1);
+        int max_text_width = 0;
+        int max_per_row = calculate_menu_per_row(cl);
+        int rows = calculate_menu_rows(cl);
+        fprintf(stderr, "rows=%d\n", rows);
+        int base_button_width = calculate_max_text_width(cl);
+        int button_index = 0;
+        for (int row = 0; row < rows; row++) {
+                int buttons_in_row = MIN(buttons - row * max_per_row, max_per_row);
+                base_button_width = (area_width - settings.padding * (buttons_in_row + 1)) / buttons_in_row;
+                fprintf(stderr, "base_button_width=%d\n", base_button_width);
 
-        int button_width = (area_width - total_gap) / buttons;
-        if (button_width < settings.menu_min_width) {
-                button_width = settings.menu_min_width;
-        }
+                for (int col = 0; col < buttons_in_row; col++) {
+                        if (button_index >= buttons) {
+                                break;
+                        }
 
-        for (int i = 0; i < buttons; i++) {
-                char *label = menu_get_label(cl->n, i);
-                if (label == NULL)
-                        continue;
-                int x = area_x + settings.padding + i * (button_width + settings.padding);
-                int y = area_y;
+                        char *label = menu_get_label(cl->n, button_index);
+                        if (!label) {
+                                button_index++;
+                                continue;
+                        }
 
-                double r = settings.menu_frame_color.r;
-                double g = settings.menu_frame_color.g;
-                double b = settings.menu_frame_color.b;
+                        int x = area_x + settings.padding + col * (base_button_width + settings.padding);
+                        int y = area_y + row * (settings.menu_height + settings.padding);
+                        fprintf(stderr, "%s (%d,%d)\n", label, x, y);
 
-                cairo_set_source_rgb(c, r,g,b);
-                draw_rect(c, x, y, button_width, settings.menu_height, scale);
-                cairo_fill(c);
+                        double r = settings.menu_frame_color.r;
+                        double g = settings.menu_frame_color.g;
+                        double b = settings.menu_frame_color.b;
+                        cairo_set_source_rgb(c, r, g, b);
+                        draw_rect(c, x, y, base_button_width, settings.menu_height, scale);
+                        cairo_fill(c);
 
-                cairo_set_source_rgba(c, COLOR(cl, fg.r), COLOR(cl, fg.g), COLOR(cl, fg.b), COLOR(cl, fg.a));
+                        cairo_set_source_rgba(c, COLOR(cl, fg.r), COLOR(cl, fg.g), COLOR(cl, fg.b), COLOR(cl, fg.a));
 
-                cairo_text_extents_t extents;
-                cairo_text_extents(c, label, &extents);
+                        cairo_text_extents_t extents;
+                        cairo_text_extents(c, label, &extents);
+                        double text_x = x + (base_button_width - extents.width) / 2;
+                        double text_y = y + (settings.menu_height + extents.height) / 2;
 
-                double text_x = x + (button_width - extents.width) / 2;
-                double text_y = y + (settings.menu_height + extents.height) / 2;
+                        cairo_move_to(c, round(text_x * scale), round(text_y * scale));
+                        cairo_select_font_face(c, settings.font, CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+                        cairo_show_text(c, label);
 
-                cairo_move_to(c, round(text_x * scale), round(text_y * scale));
-                cairo_show_text(c, label);
-                menu_set_position(cl->n, i, x, y, button_width, settings.menu_height);
+                        menu_set_position(cl->n, button_index, x, y, base_button_width, settings.menu_height);
+
+                        button_index++;
+                }
         }
 }
 
+/*end*/
 static cairo_surface_t *render_background(cairo_surface_t *srf,
                                           struct colored_layout *cl,
                                           struct colored_layout *cl_next,
@@ -853,6 +951,7 @@ static void render_content(cairo_t *c, struct colored_layout *cl, int width, int
 {
         // Redo layout setup, while knowing the width. This is to make
         // alignment work correctly
+        fprintf(stderr,"render_content\n");
         layout_setup(cl, width, height, scale);
 
         // NOTE: Includes paddings!
@@ -861,7 +960,7 @@ static void render_content(cairo_t *c, struct colored_layout *cl, int width, int
                 h_text_and_icon -= settings.progress_bar_height + settings.padding;
 
         if (have_built_in_menu(cl))
-                h_text_and_icon -= settings.menu_height + settings.padding;
+                h_text_and_icon -= calculate_menu_height(cl);
 
         int text_h = 0;
         if (!cl->n->hide_text) {
@@ -1015,6 +1114,7 @@ static struct dimensions layout_render(cairo_surface_t *srf,
 {
         double scale = output->get_scale();
         const int cl_h = layout_get_height(cl, scale);
+        fprintf(stderr, "layout_get_height= %d\n", cl_h);
 
         int bg_width = 0;
         int bg_height = MAX(settings.height.min, 2 * settings.padding + cl_h);

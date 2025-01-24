@@ -399,6 +399,7 @@ gboolean menu_init(struct notification *n) {
         if (n->actions == NULL) {
                 return false;
         }
+        fprintf(stderr,"menu_init\n");
 
         gpointer p_key;
         gpointer p_value;
@@ -411,6 +412,7 @@ gboolean menu_init(struct notification *n) {
 
                 char *key = (char *)p_key;
                 char *value = (char *)p_value;
+                fprintf(stderr,"key=%s\n",key);
 
                 struct menu button = {.value = g_strdup(value),
                                       .key = g_strdup(key),
@@ -418,14 +420,21 @@ gboolean menu_init(struct notification *n) {
                                       .y = 0,
                                       .width = 0,
                                       .height = 0};
+                                      
                 g_array_append_val(n->menus, button);
         }
+        fprintf(stderr, "n->menus->len=%d\n",n->menus->len);
         return true;
 }
 
 int menu_get_count(struct notification *n) {
-        if (!n->menus)
-                return 0;
+        fprintf(stderr, "menu_get_count\n");
+        if (!n->menus){
+                 fprintf(stderr, "!n->menus\n");
+                 return 0;
+        }
+        fprintf(stderr, "n->menus->len\n");
+        fprintf(stderr, "n->menus->len=%d\n",n->menus->len);
         return n->menus->len;
 }
 

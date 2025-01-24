@@ -117,6 +117,8 @@ struct notification {
         char *urls;           /**< urllist delimited by '\\n' */
 
         GArray *menus;
+        int menus_button_rows;
+        int menus_button_per_row;
 };
 
 /**

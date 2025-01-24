@@ -180,8 +180,12 @@ struct settings {
 
         bool built_in_menu;
         int menu_height;
+        int menu_max_width;
         int menu_min_width;
+        int menu_max_buttons_per_row;
+        int menu_max_button_rows;
         struct color menu_frame_color;
+
 };
 
 extern struct settings settings;
