@@ -21,6 +21,7 @@
 #include "settings.h"
 #include "utils.h"
 #include "icon-lookup.h"
+#include "menu.h"
 
 struct colored_layout {
         PangoLayout *l;
@@ -35,6 +36,11 @@ const struct output *output;
 window win;
 
 PangoFontDescription *pango_fdesc;
+
+static int calculate_menu_height(const struct colored_layout *cl);
+static int calculate_max_button_width(const struct colored_layout *cl);
+static int calculate_menu_per_row(const struct colored_layout *cl);
+static int calculate_menu_rows(const struct colored_layout *cl);
 
 // NOTE: Saves some characters
 #define COLOR(cl, field) (cl)->n->colors.field
@@ -233,6 +239,13 @@ static bool have_progress_bar(const struct colored_layout *cl)
                         !cl->is_xmore);
 }
 
+static bool have_built_in_menu(const struct colored_layout *cl)
+{
+        return (g_hash_table_size(cl->n->actions)>0 &&
+        settings.built_in_menu == true &&
+        !cl->is_xmore);
+}
+
 static void get_text_size(PangoLayout *l, int *w, int *h, double scale) {
         pango_layout_get_pixel_size(l, w, h);
         // scale the size down, because it may be rendered at higher DPI
@@ -320,6 +333,8 @@ static struct dimensions calculate_notification_dimensions(struct colored_layout
 
         if (have_progress_bar(cl))
                 dim.w = MAX(settings.progress_bar_min_width, dim.w);
+
+        dim.h += calculate_menu_height(cl);
 
         dim.h = MAX(settings.height.min, dim.h);
         dim.h = MIN(settings.height.max, dim.h);
@@ -442,6 +457,10 @@ static struct colored_layout *layout_from_notification(cairo_t *c, struct notifi
                 g_error_free(err);
         }
 
+        if(have_built_in_menu(cl)) {
+                menu_init(n);
+        }
+
         n->first_render = false;
         return cl;
 }
@@ -502,7 +521,7 @@ static int layout_get_height(struct colored_layout *cl, double scale)
 
         return (cl->n->icon_position == ICON_TOP && cl->n->icon)
                 ? h_icon + h_text + h_progress_bar + vertical_padding
-                : MAX(h_text, h_icon) + h_progress_bar;
+                : MAX(h_text, h_icon) + h_progress_bar + calculate_menu_height(cl);
 }
 
 /* Attempt to make internal radius more organic.
@@ -699,6 +718,139 @@ void draw_rounded_rect(cairo_t *c, float x, float y, int width, int height, int 
         cairo_close_path(c);
 }
 
+
+static int calculate_max_button_width(const struct colored_layout *cl)
+{
+        int buttons = menu_get_count(cl->n);
+        if (buttons == 0) {
+                return 0;
+        }
+
+        cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+        cairo_t *cr = cairo_create(surface);
+
+        cairo_select_font_face(cr, settings.font, CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+
+        int max_text_width = 0;
+        for (int i = 0; i < buttons; i++) {
+                char *label = menu_get_label(cl->n, i);
+                if (!label) {
+                        continue;
+                }
+
+                cairo_text_extents_t extents;
+                cairo_text_extents(cr, label, &extents);
+                int width = (int)ceil(extents.width);
+                if (width > max_text_width) {
+                        max_text_width = width;
+                }
+        }
+
+        cairo_destroy(cr);
+        cairo_surface_destroy(surface);
+
+        return MIN(settings.menu_max_width,max_text_width + 2 * settings.padding);
+}
+
+static int calculate_menu_per_row(const struct colored_layout *cl)
+{
+        int menu_width = calculate_max_button_width(cl);
+        if (menu_width <= 0) {
+                return 0;
+        }
+
+        int menu_count = 300 / menu_width;
+        menu_count = MIN(settings.menu_max_per_row, menu_count);
+        return menu_count;
+}
+
+static int calculate_menu_rows(const struct colored_layout *cl)
+{
+        int buttons = menu_get_count(cl->n);
+        if (buttons <= 0) {
+                return 0;
+        }
+
+        int max_per_row = calculate_menu_per_row(cl);
+        if (max_per_row < 1) {
+                max_per_row = 1;
+        }
+
+        int needed_rows = (buttons + max_per_row - 1) / max_per_row;
+        return MIN(needed_rows,settings.menu_max_rows);
+}
+
+static int calculate_menu_height(const struct colored_layout *cl)
+{
+        if (have_built_in_menu(cl)) {
+                int rows = calculate_menu_rows(cl);
+                return settings.menu_height * rows + settings.padding * rows;
+        } else {
+                return 0;
+        }
+}
+
+static void draw_built_in_menu(cairo_t *c, struct colored_layout *cl, int area_x, int area_y, int area_width,
+                               int area_height, double scale)
+{
+        if (!have_built_in_menu(cl))
+                return;
+
+        int buttons = menu_get_count(cl->n);
+        if (buttons == 0) {
+                return;
+        }
+        int max_text_width = 0;
+        int max_per_row = calculate_menu_per_row(cl);
+        int rows = calculate_menu_rows(cl);
+        int base_button_width = calculate_max_button_width(cl);
+        int button_index = 0;
+        for (int row = 0; row < rows; row++) {
+                int buttons_in_row = MIN(buttons - row * max_per_row, max_per_row);
+                base_button_width = (area_width - settings.padding * (buttons_in_row + 1)) / buttons_in_row;
+                for (int col = 0; col < buttons_in_row; col++) {
+                        if (button_index >= buttons) {
+                                break;
+                        }
+
+                        char *label = menu_get_label(cl->n, button_index);
+                        if (!label) {
+                                button_index++;
+                                continue;
+                        }
+
+                        int x = area_x + settings.padding + col * (base_button_width + settings.padding);
+                        int y = area_y + row * (settings.menu_height + settings.padding);
+                        double r = settings.menu_frame_color.r;
+                        double g = settings.menu_frame_color.g;
+                        double b = settings.menu_frame_color.b;
+                        cairo_set_source_rgb(c, r, g, b);
+                        draw_rect(c, x, y, base_button_width, settings.menu_height, scale);
+                        cairo_set_line_width(c, settings.menu_frame_width);
+                        if (settings.menu_frame_fill) {
+                                cairo_fill(c);
+                        }
+                        else {
+                                cairo_stroke(c);
+                        }
+
+
+                        cairo_set_source_rgba(c, COLOR(cl, fg.r), COLOR(cl, fg.g), COLOR(cl, fg.b), COLOR(cl, fg.a));
+
+                        cairo_text_extents_t extents;
+                        cairo_text_extents(c, label, &extents);
+                        double text_x = x + (base_button_width - extents.width) / 2;
+                        double text_y = y + (settings.menu_height + extents.height) / 2;
+
+                        cairo_move_to(c, round(text_x * scale), round(text_y * scale));
+                        cairo_select_font_face(c, settings.font, CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+                        cairo_show_text(c, label);
+                        menu_set_position(cl->n, button_index, x, y, base_button_width, settings.menu_height);
+                        button_index++;
+                }
+        }
+}
+
 static cairo_surface_t *render_background(cairo_surface_t *srf,
                                           struct colored_layout *cl,
                                           struct colored_layout *cl_next,
@@ -784,10 +936,12 @@ static void render_content(cairo_t *c, struct colored_layout *cl, int width, int
         layout_setup(cl, width, height, scale);
 
         // NOTE: Includes paddings!
-        int h_without_progress_bar = height;
-        if (have_progress_bar(cl)) {
-                h_without_progress_bar -= settings.progress_bar_height + settings.padding;
-        }
+        int h_text_and_icon = height;
+        if (have_progress_bar(cl))
+                h_text_and_icon -= settings.progress_bar_height + settings.padding;
+
+        if (have_built_in_menu(cl))
+                h_text_and_icon -= calculate_menu_height(cl);
 
         int text_h = 0;
         if (!cl->n->hide_text) {
@@ -799,9 +953,9 @@ static void render_content(cairo_t *c, struct colored_layout *cl, int width, int
             text_y = settings.padding;
 
         if (settings.vertical_alignment == VERTICAL_CENTER) {
-                text_y = h_without_progress_bar / 2 - text_h / 2;
+                text_y = h_text_and_icon / 2 - text_h / 2;
         } else if (settings.vertical_alignment == VERTICAL_BOTTOM) {
-                text_y = h_without_progress_bar - settings.padding - text_h;
+                text_y = h_text_and_icon - settings.padding - text_h;
                 if (text_y < 0) text_y = settings.padding;
         } // else VERTICAL_TOP
 
@@ -867,7 +1021,7 @@ static void render_content(cairo_t *c, struct colored_layout *cl, int width, int
                 unsigned int frame_width = settings.progress_bar_frame_width,
                              progress_width = MIN(width - 2 * settings.h_padding, settings.progress_bar_max_width),
                              progress_height = settings.progress_bar_height - frame_width,
-                             frame_y = h_without_progress_bar,
+                             frame_y = h_text_and_icon,
                              progress_width_without_frame = progress_width - 2 * frame_width,
                              progress_width_1 = progress_width_without_frame * progress / 100,
                              progress_width_2 = progress_width_without_frame - 1;
@@ -922,6 +1076,15 @@ static void render_content(cairo_t *c, struct colored_layout *cl, int width, int
                                 scale, settings.progress_bar_corners);
                 cairo_stroke(c);
         }
+
+       if (have_built_in_menu(cl)) {
+                int y = h_text_and_icon;
+                if (have_progress_bar(cl)) {
+                        y += settings.progress_bar_height + settings.padding;
+                }
+                draw_built_in_menu(c, cl, 0, y, width, height, scale);
+        }
+
 }
 
 static struct dimensions layout_render(cairo_surface_t *srf,
